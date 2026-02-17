@@ -1,125 +1,116 @@
 # HeadlessX Flake Tutorial
 
-This flake gives you reproducible commands for cloning, installing dependencies, running PostgreSQL, setting up Prisma DB, and starting development.
+This flake provides reproducible `nix run` commands for setup, database, dev, build, and production start.
 
 ## Prerequisites
 
 - Nix with flakes enabled
-- Internet access for fetching flake inputs and npm packages
+- Internet access for flake inputs and npm packages
 
-## 1) Enter the dev shell (optional)
+## Optional: Enter Dev Shell
 
 ```bash
 nix develop
 ```
 
-The shell includes Node.js 22, pnpm, git, PostgreSQL 16, and native runtime libraries.
+The shell includes Node.js 22, pnpm, git, PostgreSQL 16, Prisma engines, and runtime libs.
 
-## 2) Clone the repository
+## Quick Start (existing repo)
 
-Clone into the current empty directory:
-
-```bash
-nix run .#clone -- https://github.com/saifyxpro/HeadlessX
-```
-
-Or clone into a folder:
-
-```bash
-nix run .#clone -- https://github.com/saifyxpro/HeadlessX HeadlessX
-cd HeadlessX
-```
-
-## 3) Create environment file
+1. Create env file:
 
 ```bash
 nix run .#env
 ```
 
-This creates `backend/.env` from `.env.example` if it does not exist.
-
-## 4) Start local PostgreSQL
+2. Setup local PostgreSQL + install + `db push`:
 
 ```bash
-nix run .#postgres-start
+POSTGRES_DATA_DIR=.postgres-nix POSTGRES_PORT=55432 nix run .#setup-install-db
 ```
 
-Default connection produced by this command:
-
-```text
-postgresql://postgres@127.0.0.1:5432/headlessx
-```
-
-You can customize with environment variables:
-
-- `POSTGRES_DATA_DIR` (default: `.postgres`)
-- `POSTGRES_PORT` (default: `5432`)
-- `POSTGRES_USER` (default: `postgres`)
-- `POSTGRES_DB` (default: `headlessx`)
-
-Example:
-
-```bash
-POSTGRES_PORT=55432 POSTGRES_DATA_DIR=.pgdata nix run .#postgres-start
-```
-
-## 5) Install dependencies and push Prisma schema
-
-```bash
-nix run .#install-db
-```
-
-This runs:
-
-1. `pnpm install`
-2. `pnpm db:push`
-
-It requires `DATABASE_URL` in `backend/.env` to be set and non-empty.
-
-## One-command setup with local PostgreSQL
-
-If you want install + DB setup with local PostgreSQL managed for you:
-
-```bash
-nix run .#setup-install-db
-```
-
-What it does:
-
-1. Creates `backend/.env` if missing
-2. Initializes/starts PostgreSQL locally
-3. Sets `DATABASE_URL` to local PostgreSQL if missing/empty
-4. Runs `pnpm install`
-5. Runs `pnpm db:push`
-
-## Full project setup command
-
-```bash
-nix run .#setup -- https://github.com/saifyxpro/HeadlessX
-```
-
-This command handles clone + install + model fetch + DB push (it expects `DATABASE_URL` to exist in `backend/.env`).
-
-## Start development server
+3. Start development:
 
 ```bash
 nix run .#dev
 ```
 
-Or directly:
+Or run production mode:
 
 ```bash
-pnpm dev
+nix run .#build
+nix run .#start
 ```
 
-## Stop local PostgreSQL
+## PostgreSQL Commands
+
+Start local PostgreSQL:
+
+```bash
+nix run .#postgres-start
+```
+
+Stop local PostgreSQL:
 
 ```bash
 nix run .#postgres-stop
 ```
 
-## Command reference
+Supported env vars:
 
+- `POSTGRES_DATA_DIR` default: `.postgres`
+- `POSTGRES_PORT` default: `5432`
+- `POSTGRES_USER` default: `postgres`
+- `POSTGRES_DB` default: `headlessx`
+
+## Build and Run Commands
+
+Build backend + frontend:
+
+```bash
+nix run .#build
+```
+
+Start backend + frontend (production):
+
+```bash
+nix run .#start
+```
+
+Build frontend only:
+
+```bash
+nix run .#build-client
+```
+
+Start frontend only (production):
+
+```bash
+nix run .#start-client
+```
+
+Notes:
+
+- `nix run .#start` auto-builds frontend if `frontend/.next/BUILD_ID` is missing.
+- `nix run .#start-client` also auto-builds frontend if needed.
+
+## Camoufox on NixOS
+
+This flake now sets `CAMOUFOX_EXECUTABLE_PATH` automatically and links it to:
+
+- preferred path: `/home/alex/Documents/camoufox-browser-nix/result/bin/camoufox-bin`
+- fallback path: flake-packaged Camoufox binary
+
+You can override at runtime:
+
+```bash
+HEADLESSX_CAMOUFOX_BIN=/path/to/camoufox-bin nix run .#start
+```
+
+## Full Command Reference
+
+- `nix run .` (same as `nix run .#setup`)
+- `nix run .#setup -- [repo-url] [dir]`
 - `nix run .#clone -- <repo-url> [dir]`
 - `nix run .#env`
 - `nix run .#deps`
@@ -129,11 +120,14 @@ nix run .#postgres-stop
 - `nix run .#postgres-start`
 - `nix run .#postgres-stop`
 - `nix run .#setup-install-db`
-- `nix run .#setup -- [repo-url] [dir]`
 - `nix run .#dev`
+- `nix run .#build`
+- `nix run .#start`
+- `nix run .#build-client`
+- `nix run .#start-client`
 
 ## Troubleshooting
 
-- If `DATABASE_URL is missing or empty in backend/.env`, set `DATABASE_URL` and rerun.
-- If PostgreSQL cannot start, check if the port is already in use and try `POSTGRES_PORT=<new-port>`.
-- If clone fails in `.` target, use an empty directory or pass a target folder.
+- If `DATABASE_URL` is missing/empty in `backend/.env`, set it and rerun DB/setup commands.
+- If PostgreSQL cannot start, switch port: `POSTGRES_PORT=55432 nix run .#postgres-start`.
+- If clone into `.` fails, use an empty directory or pass a target folder.
