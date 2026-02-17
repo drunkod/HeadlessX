@@ -71,6 +71,20 @@ class BrowserService {
         }
     }
 
+    private getCamoufoxExecutablePath(): string | undefined {
+        const envPath = process.env.CAMOUFOX_EXECUTABLE_PATH?.trim();
+        if (!envPath) {
+            return undefined;
+        }
+
+        if (!fs.existsSync(envPath)) {
+            console.warn(`⚠️ CAMOUFOX_EXECUTABLE_PATH does not exist: ${envPath}`);
+            return undefined;
+        }
+
+        return envPath;
+    }
+
     /**
      * Launch Camoufox browser WITHOUT profile (returns Browser)
      */
@@ -115,6 +129,11 @@ class BrowserService {
                 'general.platform.override': '',
             },
         };
+
+        const executablePath = this.getCamoufoxExecutablePath();
+        if (executablePath) {
+            camoufoxOptions.executable_path = executablePath;
+        }
 
         console.log(`🦊 Launching Camoufox (Mode: ${isSpeedMode ? '⚡ SPEED' : '🎭 STEALTH'}, Humanize: ${camoufoxOptions.humanize})`);
 
@@ -214,6 +233,11 @@ class BrowserService {
                 'network.proxy.socks_remote_dns': true,  // Essential for SOCKS to resolve hostnames remotely
             },
         };
+
+        const executablePath = this.getCamoufoxExecutablePath();
+        if (executablePath) {
+            camoufoxOptions.executable_path = executablePath;
+        }
 
         // Apply profile-specific screen size if set (otherwise uses default 1920x1080)
         if (profile.screenWidth && profile.screenHeight) {

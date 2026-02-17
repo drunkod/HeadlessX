@@ -13,11 +13,27 @@
           inherit system;
           config.allowUnfree = true;
         };
+        lib = pkgs.lib;
 
         # Change this to your real repository URL if you want a permanent default.
         defaultRepoUrl = "https://github.com/saifyxpro/HeadlessX";
         prismaEngines = pkgs."prisma-engines";
         prismaSchemaEngineBinary = "${prismaEngines}/bin/schema-engine";
+        runtimeLibPath = lib.makeLibraryPath (
+          commonLibs ++ [
+            pkgs.openssl
+            pkgs.zlib
+            pkgs.stdenv.cc.cc.lib
+            pkgs.nss
+            pkgs.nspr
+            pkgs.libgbm
+            pkgs.glib
+            pkgs.libxkbcommon
+            pkgs.libxau
+            pkgs.libxdmcp
+          ]
+        );
+        nixLd = pkgs.stdenv.cc.bintools.dynamicLinker;
 
         commonLibs = with pkgs; [
           # Runtime libraries commonly needed by Prisma and browser tooling.
@@ -34,41 +50,217 @@
           cairo
           at-spi2-core
           at-spi2-atk
-          xorg.libX11
-          xorg.libXcomposite
-          xorg.libXdamage
-          xorg.libXext
-          xorg.libXfixes
-          xorg.libXrandr
-          xorg.libxcb
-          xorg.libxshmfence
-          xorg.libXtst
-          xorg.libXi
-          xorg.libXcursor
-          xorg.libXrender
-          xorg.libXScrnSaver
+          libx11
+          libxcomposite
+          libxdamage
+          libxext
+          libxfixes
+          libxrandr
+          libxcb
+          libxshmfence
+          libxtst
+          libxi
+          libxcursor
+          libxrender
+          libxscrnsaver
           fontconfig
           freetype
         ];
+
+        camoufoxVersion = "135.0.1-beta.24";
+        camoufoxEnabled = system == "x86_64-linux";
+        camoufoxRuntimeLibs = with pkgs; [
+          stdenv.cc.cc.lib
+          glib
+          gtk3
+          pango
+          cairo
+          gdk-pixbuf
+          atk
+          at-spi2-atk
+          at-spi2-core
+          libxkbcommon
+          dbus
+          alsa-lib
+          fontconfig
+          freetype
+          libglvnd
+          libdrm
+          nss
+          nspr
+          libnotify
+          cups
+          pciutils
+          vulkan-loader
+          libva
+          libgbm
+          pipewire
+          libpulseaudio
+          libcanberra-gtk3
+          libx11
+          libxcomposite
+          libxdamage
+          libxext
+          libxfixes
+          libxrandr
+          libxrender
+          libxtst
+          libxcb
+          libxcursor
+          libxi
+          libxinerama
+        ];
+        camoufoxRuntimeLibPath = lib.makeLibraryPath camoufoxRuntimeLibs;
+        camoufoxRuntimeBinPath = lib.makeBinPath [ pkgs.xdg-utils ];
+        camoufoxXdgDataPath =
+          "${pkgs.adwaita-icon-theme}/share:"
+          + "${pkgs.gsettings-desktop-schemas}/share:"
+          + "${pkgs.gtk3}/share";
+
+        camoufoxUnwrapped =
+          if camoufoxEnabled then
+            pkgs.stdenvNoCC.mkDerivation rec {
+              pname = "headlessx-camoufox-unwrapped";
+              version = camoufoxVersion;
+
+              src = pkgs.fetchzip {
+                url = "https://github.com/daijro/camoufox/releases/download/v${version}/camoufox-${version}-lin.x86_64.zip";
+                sha256 = "sha256-k5t12L5q0RG8Zun0SAjGthYQXUcf+xVHvk9Mknr97QY=";
+                stripRoot = false;
+              };
+
+              nativeBuildInputs = [
+                pkgs.jq
+                pkgs.patchelf
+              ];
+
+              dontBuild = true;
+              dontStrip = true;
+              dontPatchELF = true;
+
+              installPhase = ''
+                runHook preInstall
+
+                mkdir -p "$out/lib/camoufox"
+                cp -a ./. "$out/lib/camoufox/"
+
+                if [ -f "$out/lib/camoufox/distribution/policies.json" ]; then
+                  tmp_policies="$(mktemp)"
+                  jq '
+                    if .policies then
+                      .policies |= (
+                        del(.SearchEngines)
+                        | if (.Extensions and .Extensions.Uninstall) then
+                            .Extensions.Uninstall |= map(select(test("@search\\.mozilla\\.org$") | not))
+                          else
+                            .
+                          end
+                      )
+                    else
+                      .
+                    end
+                  ' "$out/lib/camoufox/distribution/policies.json" > "$tmp_policies"
+                  mv "$tmp_policies" "$out/lib/camoufox/distribution/policies.json"
+                fi
+
+                if [ -f "$out/lib/camoufox/camoufox.cfg" ]; then
+                  sed -i 's|"browser.newtabpage.activity-stream.asrouter.providers.snippets", ""|"browser.newtabpage.activity-stream.asrouter.providers.snippets", "{}"|' "$out/lib/camoufox/camoufox.cfg"
+                fi
+
+                chmod +x "$out/lib/camoufox/camoufox"
+                chmod +x "$out/lib/camoufox/camoufox-bin"
+
+                if [ ! -e "$out/lib/camoufox/glxtest" ]; then
+                  ln -s ${pkgs.firefox-unwrapped}/lib/firefox/glxtest "$out/lib/camoufox/glxtest"
+                fi
+
+                patchelf --set-interpreter ${pkgs.stdenv.cc.bintools.dynamicLinker} "$out/lib/camoufox/camoufox"
+                patchelf --set-interpreter ${pkgs.stdenv.cc.bintools.dynamicLinker} "$out/lib/camoufox/camoufox-bin"
+
+                runHook postInstall
+              '';
+            }
+          else
+            null;
+
+        camoufoxWrapped =
+          if camoufoxEnabled then
+            pkgs.stdenvNoCC.mkDerivation rec {
+              pname = "headlessx-camoufox";
+              version = camoufoxVersion;
+
+              nativeBuildInputs = [ pkgs.makeWrapper ];
+
+              dontUnpack = true;
+              dontBuild = true;
+
+              buildCommand = ''
+                mkdir -p "$out/bin" "$out/lib"
+                ln -s ${camoufoxUnwrapped}/lib/camoufox "$out/lib/camoufox"
+
+                makeWrapper ${camoufoxUnwrapped}/lib/camoufox/camoufox "$out/bin/camoufox" \
+                  --prefix LD_LIBRARY_PATH : "${camoufoxRuntimeLibPath}:${camoufoxUnwrapped}/lib/camoufox" \
+                  --suffix PATH : "${camoufoxRuntimeBinPath}" \
+                  --suffix XDG_DATA_DIRS : "${camoufoxXdgDataPath}" \
+                  --set MOZ_APP_LAUNCHER camoufox \
+                  --set MOZ_LEGACY_PROFILES 1 \
+                  --set MOZ_ALLOW_DOWNGRADE 1 \
+                  --set-default MOZ_ENABLE_WAYLAND 1 \
+                  --set-default LIBGL_ALWAYS_SOFTWARE 1 \
+                  --set-default MOZ_WEBRENDER 0 \
+                  --set-default MOZ_ACCELERATED 0 \
+                  --set-default GDK_DISABLE_GL 1
+
+                makeWrapper ${camoufoxUnwrapped}/lib/camoufox/camoufox-bin "$out/bin/camoufox-bin" \
+                  --prefix LD_LIBRARY_PATH : "${camoufoxRuntimeLibPath}:${camoufoxUnwrapped}/lib/camoufox" \
+                  --set-default LIBGL_ALWAYS_SOFTWARE 1 \
+                  --set-default MOZ_WEBRENDER 0 \
+                  --set-default MOZ_ACCELERATED 0 \
+                  --set-default GDK_DISABLE_GL 1
+              '';
+            }
+          else
+            null;
+
+        camoufoxExecutablePath =
+          if camoufoxEnabled then
+            "${camoufoxWrapped}/bin/camoufox-bin"
+          else
+            "";
+        camoufoxUserPreferredPath = "/home/alex/Documents/camoufox-browser-nix/result/bin/camoufox-bin";
 
         mkApp = name: text:
           let
             app = pkgs.writeShellApplication {
               inherit name;
-              runtimeInputs = with pkgs; [
-                bash
-                coreutils
-                findutils
-                git
-                gnugrep
-                gnused
-                nodejs_22
-                pnpm
-                postgresql_16
-              ];
+              runtimeInputs =
+                (with pkgs; [
+                  bash
+                  coreutils
+                  findutils
+                  git
+                  gnugrep
+                  gnused
+                  nodejs_22
+                  pnpm
+                  postgresql_16
+                ])
+                ++ lib.optionals camoufoxEnabled [ camoufoxWrapped ];
               text = ''
                 export PRISMA_HIDE_UPDATE_MESSAGE=1
                 export PRISMA_SCHEMA_ENGINE_BINARY="${prismaSchemaEngineBinary}"
+                export NIX_LD="${nixLd}"
+                export NIX_LD_LIBRARY_PATH="${runtimeLibPath}:''${NIX_LD_LIBRARY_PATH:-}"
+                export LD_LIBRARY_PATH="${runtimeLibPath}:''${LD_LIBRARY_PATH:-}"
+                ${lib.optionalString camoufoxEnabled ''
+                  export CAMOUFOX_EXECUTABLE_PATH="$HOME/.cache/camoufox/camoufox-bin-nix"
+                  mkdir -p "$HOME/.cache/camoufox"
+                  if [ -x "''${HEADLESSX_CAMOUFOX_BIN:-${camoufoxUserPreferredPath}}" ]; then
+                    ln -sf "''${HEADLESSX_CAMOUFOX_BIN:-${camoufoxUserPreferredPath}}" "$CAMOUFOX_EXECUTABLE_PATH"
+                  else
+                    ln -sf "${camoufoxExecutablePath}" "$CAMOUFOX_EXECUTABLE_PATH"
+                  fi
+                ''}
                 ${text}
               '';
             };
@@ -90,20 +282,26 @@
             gcc
             postgresql_16
             prismaEngines
-          ] ++ commonLibs;
+            glib
+            libxkbcommon
+          ] ++ commonLibs ++ lib.optionals camoufoxEnabled [ camoufoxWrapped ];
 
           shellHook = ''
             export NODE_ENV=development
             export PRISMA_HIDE_UPDATE_MESSAGE=1
             export PRISMA_SCHEMA_ENGINE_BINARY="${prismaSchemaEngineBinary}"
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
-              pkgs.openssl
-              pkgs.zlib
-              pkgs.stdenv.cc.cc.lib
-              pkgs.nss
-              pkgs.nspr
-              pkgs.libgbm
-            ]}:$LD_LIBRARY_PATH"
+            export NIX_LD="${nixLd}"
+            export NIX_LD_LIBRARY_PATH="${runtimeLibPath}:''${NIX_LD_LIBRARY_PATH:-}"
+            export LD_LIBRARY_PATH="${runtimeLibPath}:''${LD_LIBRARY_PATH:-}"
+            ${lib.optionalString camoufoxEnabled ''
+              export CAMOUFOX_EXECUTABLE_PATH="$HOME/.cache/camoufox/camoufox-bin-nix"
+              mkdir -p "$HOME/.cache/camoufox"
+              if [ -x "''${HEADLESSX_CAMOUFOX_BIN:-${camoufoxUserPreferredPath}}" ]; then
+                ln -sf "''${HEADLESSX_CAMOUFOX_BIN:-${camoufoxUserPreferredPath}}" "$CAMOUFOX_EXECUTABLE_PATH"
+              else
+                ln -sf "${camoufoxExecutablePath}" "$CAMOUFOX_EXECUTABLE_PATH"
+              fi
+            ''}
 
             echo "HeadlessX dev shell ready."
             echo "Quick start with nix apps:"
