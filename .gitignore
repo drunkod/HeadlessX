@@ -88,3 +88,6 @@ config.local.js
 frontend/pnpm-lock.yaml
 frontend/pnpm-workspace.yaml
 backend/pnpm-lock.yaml
+.postgres
+.postgres-nix
+result

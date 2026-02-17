@@ -1,6 +1,5 @@
 // Camoufox - Anti-detect Firefox browser with built-in fingerprint spoofing
 // Superior stealth compared to Chromium-based solutions
-import { Camoufox } from 'camoufox-js';
 import { Browser, BrowserContext, Page } from 'playwright-core';
 import { configService } from './ConfigService';
 import { profileService, type Profile } from './ProfileService';
@@ -30,6 +29,7 @@ class BrowserService {
     private static instance: BrowserService;
     private profiles: Map<string, ManagedInstance> = new Map();
     private defaultBrowser: Browser | null = null;
+    private camoufoxLauncher: ((options: any) => Promise<CamoufoxInstance>) | null = null;
     private isClosing = false;
     private readonly profilesDir: string;
 
@@ -45,6 +45,30 @@ class BrowserService {
             BrowserService.instance = new BrowserService();
         }
         return BrowserService.instance;
+    }
+
+    private async getCamoufoxLauncher(): Promise<(options: any) => Promise<CamoufoxInstance>> {
+        if (this.camoufoxLauncher) {
+            return this.camoufoxLauncher;
+        }
+
+        try {
+            const camoufoxModule = await import('camoufox-js');
+            const launcher = (camoufoxModule as any).Camoufox ?? (camoufoxModule as any).default;
+
+            if (typeof launcher !== 'function') {
+                throw new Error('Camoufox export not found');
+            }
+
+            const launcherFn = launcher as (options: any) => Promise<CamoufoxInstance>;
+            this.camoufoxLauncher = launcherFn;
+            return launcherFn;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `Failed to initialize Camoufox. Run 'pnpm --filter headlessx-backend exec npx camoufox-js fetch' and verify your runtime supports camoufox-js. Original error: ${message}`
+            );
+        }
     }
 
     /**
@@ -96,7 +120,8 @@ class BrowserService {
 
 
         // No user_data_dir = returns Browser
-        const browser = await Camoufox(camoufoxOptions) as Browser;
+        const camoufox = await this.getCamoufoxLauncher();
+        const browser = await camoufox(camoufoxOptions) as Browser;
         console.log('✅ Camoufox launched (anti-fingerprint active)');
 
         return browser;
@@ -206,7 +231,8 @@ class BrowserService {
         }
 
         // With user_data_dir, Camoufox returns a BrowserContext directly
-        const context = await Camoufox(camoufoxOptions) as BrowserContext;
+        const camoufox = await this.getCamoufoxLauncher();
+        const context = await camoufox(camoufoxOptions) as BrowserContext;
         console.log('✅ Camoufox profile context launched (persistent storage active)');
 
         // Attach proxyChainUrl to the context object for later cleanup

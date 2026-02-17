@@ -42,6 +42,7 @@ model SystemSettings {
   proxy_enabled             Boolean  @default(false)
   proxy_url                 String?
   proxy_protocol            String?  @default("http")
+  fingerprint_profile       String   @default("desktop-chrome")
   
   // Profile rotation settings
   profile_rotation          Boolean  @default(true)

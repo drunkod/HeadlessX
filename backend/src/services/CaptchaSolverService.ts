@@ -1,9 +1,9 @@
 import { Page, Frame } from 'playwright-core';
 import path from 'path';
 import fs from 'fs';
+import { spawnSync } from 'child_process';
 import { env } from '@xenova/transformers';
 import * as ort from 'onnxruntime-web';
-import sharp from 'sharp';
 
 // Configure local models environment
 env.allowLocalModels = true;
@@ -24,6 +24,8 @@ export class CaptchaSolverService {
     private static instance: CaptchaSolverService;
     private visualModelSession: ort.InferenceSession | null = null;
     private detectionModelSession: ort.InferenceSession | null = null;
+    private sharpModule: any = null;
+    private sharpSupported: boolean | null = null;
 
     private readonly modelsDir: string;
 
@@ -71,6 +73,37 @@ export class CaptchaSolverService {
             CaptchaSolverService.instance = new CaptchaSolverService();
         }
         return CaptchaSolverService.instance;
+    }
+
+    /**
+     * Some CPUs crash with SIGILL when loading sharp native bindings.
+     * Probe in a child process first so the main server process stays alive.
+     */
+    private isSharpSupported(): boolean {
+        if (this.sharpSupported !== null) return this.sharpSupported;
+
+        const probe = spawnSync(
+            process.execPath,
+            ['-e', "try { require('sharp'); process.exit(0); } catch { process.exit(1); }"],
+            { stdio: 'ignore' }
+        );
+
+        this.sharpSupported = probe.status === 0;
+        if (!this.sharpSupported) {
+            const signalInfo = probe.signal ? `, signal=${probe.signal}` : '';
+            console.warn(`⚠️ sharp is not supported on this machine (status=${probe.status}${signalInfo}). CAPTCHA visual solver disabled.`);
+        }
+
+        return this.sharpSupported;
+    }
+
+    private async getSharp() {
+        if (!this.isSharpSupported()) return null;
+        if (!this.sharpModule) {
+            const mod = await import('sharp');
+            this.sharpModule = (mod as any).default ?? mod;
+        }
+        return this.sharpModule;
     }
 
     /**
@@ -351,7 +384,10 @@ export class CaptchaSolverService {
     private async analyze4x4Classification(imageData: Buffer, targetClass: string): Promise<number[]> {
         // Implementation similar to 3x3 but with 16 tiles and simpler threshold logic
         try {
-            const metadata = await sharp(imageData).metadata();
+            const sharpLib = await this.getSharp();
+            if (!sharpLib) return [];
+
+            const metadata = await sharpLib(imageData).metadata();
             const width = metadata.width || 400; // 4x4 usually larger
             const height = metadata.height || 400;
             const tileW = Math.floor(width / 4);
@@ -373,7 +409,7 @@ export class CaptchaSolverService {
             for (let row = 0; row < 4; row++) {
                 for (let col = 0; col < 4; col++) {
                     const cellNum = row * 4 + col + 1;
-                    const tileBuffer = await sharp(imageData)
+                    const tileBuffer = await sharpLib(imageData)
                         .extract({ left: col * tileW, top: row * tileH, width: tileW, height: tileH })
                         .resize(224, 224).removeAlpha().raw().toBuffer();
 
@@ -415,7 +451,10 @@ export class CaptchaSolverService {
      */
     private async analyzeGridRanked(imageData: Buffer, targetClass: string, gridSize: number): Promise<number[]> {
         try {
-            const metadata = await sharp(imageData).metadata();
+            const sharpLib = await this.getSharp();
+            if (!sharpLib) return [];
+
+            const metadata = await sharpLib(imageData).metadata();
             const width = metadata.width || 300;
             const height = metadata.height || 300;
             const tileW = Math.floor(width / gridSize);
@@ -435,7 +474,7 @@ export class CaptchaSolverService {
             for (let row = 0; row < gridSize; row++) {
                 for (let col = 0; col < gridSize; col++) {
                     const cellNum = row * gridSize + col + 1;
-                    const tileBuffer = await sharp(imageData)
+                    const tileBuffer = await sharpLib(imageData)
                         .extract({ left: col * tileW, top: row * tileH, width: tileW, height: tileH })
                         .resize(224, 224).removeAlpha().raw().toBuffer();
 
@@ -498,12 +537,17 @@ export class CaptchaSolverService {
     }
 
     private async preprocessImageForYOLO(buffer: Buffer): Promise<{ tensor: ort.Tensor; width: number; height: number }> {
-        const metadata = await sharp(buffer).metadata();
+        const sharpLib = await this.getSharp();
+        if (!sharpLib) {
+            throw new Error('sharp unavailable');
+        }
+
+        const metadata = await sharpLib(buffer).metadata();
         const width = metadata.width || 640;
         const height = metadata.height || 640;
 
         // YOLO typically expects 640x640
-        const resized = await sharp(buffer)
+        const resized = await sharpLib(buffer)
             .resize(640, 640, { fit: 'fill' })
             .removeAlpha()
             .raw()
